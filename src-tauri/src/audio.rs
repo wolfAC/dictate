@@ -16,7 +16,50 @@ use cpal::{
 /// Whisper expects 16 kHz mono f32 samples.
 pub const WHISPER_RATE: u32 = 16_000;
 
-/// Records from the default input device on a dedicated thread, because cpal
+/// A microphone the user can pick. `id` is cpal's stable device id, saved in the settings.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputDevice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+pub fn input_devices() -> Vec<InputDevice> {
+    let host = cpal::default_host();
+    let default_id = host.default_input_device().and_then(|d| d.id().ok());
+    let Ok(devices) = host.input_devices() else {
+        return Vec::new();
+    };
+    devices
+        .filter_map(|device| {
+            let id = device.id().ok()?;
+            Some(InputDevice {
+                name: device_name(&device),
+                is_default: Some(&id) == default_id.as_ref(),
+                id: id.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn device_name(device: &cpal::Device) -> String {
+    device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Unknown microphone".into())
+}
+
+/// The saved microphone, or the system default when none is saved or it's unplugged.
+fn input_device(id: &str) -> anyhow::Result<cpal::Device> {
+    let host = cpal::default_host();
+    if !id.is_empty() {
+        match id.parse().ok().and_then(|id| host.device_by_id(&id)) {
+            Some(device) => return Ok(device),
+            None => log::warn!("microphone {id} not found; using the default"),
+        }
+    }
+    host.default_input_device().context("no microphone found")
+}
+
+/// Records from the chosen input device on a dedicated thread, because cpal
 /// streams are not `Send` on every platform.
 pub struct Recorder {
     stop_tx: mpsc::Sender<()>,
@@ -28,7 +71,8 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn start() -> anyhow::Result<Self> {
+    /// `device` is an `InputDevice` id, or empty for the system default.
+    pub fn start(device: &str) -> anyhow::Result<Self> {
         let samples = Arc::new(Mutex::new(Vec::with_capacity(WHISPER_RATE as usize * 30)));
         let level = Arc::new(AtomicU32::new(0));
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -36,8 +80,9 @@ impl Recorder {
 
         let thread_samples = samples.clone();
         let thread_level = level.clone();
+        let device = device.to_string();
         let thread = std::thread::spawn(move || {
-            let stream = match open_stream(thread_samples, thread_level) {
+            let stream = match open_stream(&device, thread_samples, thread_level) {
                 Ok((stream, rate)) => {
                     let _ = ready_tx.send(Ok(rate));
                     stream
@@ -63,6 +108,11 @@ impl Recorder {
         f32::from_bits(self.level.load(Ordering::Relaxed))
     }
 
+    /// Throws away what was recorded so far; the mic test only needs the level.
+    pub fn clear(&self) {
+        self.samples.lock().unwrap().clear();
+    }
+
     /// Stops recording and returns 16 kHz mono audio.
     pub fn stop(self) -> Vec<f32> {
         let _ = self.stop_tx.send(());
@@ -73,20 +123,18 @@ impl Recorder {
 }
 
 fn open_stream(
+    device_id: &str,
     samples: Arc<Mutex<Vec<f32>>>,
     level: Arc<AtomicU32>,
 ) -> anyhow::Result<(cpal::Stream, u32)> {
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .context("no microphone found")?;
+    let device = input_device(device_id)?;
     let config = device
         .default_input_config()
         .context("could not read microphone config")?;
     let rate = config.sample_rate();
     log::info!(
         "microphone: {} ({} Hz, {} ch, {})",
-        device.description().map(|d| d.to_string()).unwrap_or_else(|_| "unknown".into()),
+        device_name(&device),
         rate,
         config.channels(),
         config.sample_format()
@@ -202,7 +250,25 @@ pub fn request_mic_permission() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows records silence when microphone access is off in Settings → Privacy & security
+/// → Microphone, either for every app or for desktop apps.
+#[cfg(target_os = "windows")]
+pub fn mic_permission() -> MicPermission {
+    const STORE: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
+    let denied = |path: &str| {
+        windows_registry::CURRENT_USER
+            .open(path)
+            .and_then(|key| key.get_string("Value"))
+            .is_ok_and(|v| v.eq_ignore_ascii_case("Deny"))
+    };
+    if denied(STORE) || denied(&format!(r"{STORE}\NonPackaged")) {
+        MicPermission::Denied
+    } else {
+        MicPermission::Granted
+    }
+}
+
+#[cfg(target_os = "linux")]
 pub fn mic_permission() -> MicPermission {
     MicPermission::Granted
 }

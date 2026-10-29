@@ -44,10 +44,14 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
 
-      # Build the installers so packaging breaks show up before a release
+      # Build the installers so packaging breaks show up before a release.
+      # Update files need the signing key, which only release builds get.
       - name: Build installers
         if: matrix.bundles
-        run: pnpm tauri build --ci --bundles ${{ matrix.bundles }}
+        shell: bash
+        run: >
+          pnpm tauri build --ci --bundles ${{ matrix.bundles }}
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
       - uses: actions/upload-artifact@v7
         if: matrix.bundles
         with:

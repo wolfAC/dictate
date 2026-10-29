@@ -9,6 +9,15 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M12 19v3" />
     </>
   ),
+  audio: <path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" />,
+  refresh: (
+    <>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
+    </>
+  ),
   stop: <rect width="12" height="12" x="6" y="6" rx="2" />,
   loader: <path d="M21 12a9 9 0 1 1-6.219-8.56" />,
   keyboard: (

@@ -9,6 +9,8 @@ export type EngineKind = "local" | "cloud";
 export interface Settings {
   hotkey: string;
   mode: Mode;
+  /** InputDevice id; empty for the system default. */
+  microphone: string;
   model: string;
   language: string;
   output: Output;
@@ -23,6 +25,18 @@ export interface Settings {
   replacements: Replacement[];
   historyEnabled: boolean;
   historyDays: number;
+  checkUpdates: boolean;
+}
+
+export interface InputDevice {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
+export interface UpdateInfo {
+  version: string;
+  notes: string | null;
 }
 
 export interface Replacement {
@@ -75,6 +89,8 @@ export interface AppState {
   providers: Provider[];
   cloudKeys: string[];
   launchAtLogin: boolean;
+  version: string;
+  update: UpdateInfo | null;
   waylandTools: string[] | null;
   lastTranscript: string;
 }
@@ -99,6 +115,13 @@ export const api = {
   requestInputPermission: () => invoke<boolean>("request_input_permission"),
   requestKeyboardPermission: () => invoke<boolean>("request_keyboard_permission"),
   openMicSettings: () => invoke<void>("open_mic_settings"),
+  requestMicPermission: () => invoke<void>("request_mic_permission"),
+  openSoundSettings: () => invoke<void>("open_sound_settings"),
+  listMicrophones: () => invoke<InputDevice[]>("list_microphones"),
+  startMicTest: () => invoke<void>("start_mic_test"),
+  stopMicTest: () => invoke<void>("stop_mic_test"),
+  checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
+  installUpdate: () => invoke<void>("install_update"),
   saveCloudKey: (provider: string, key: string) => invoke<void>("save_cloud_key", { provider, key }),
   testCloud: () => invoke<string>("test_cloud"),
   setLaunchAtLogin: (enabled: boolean) => invoke<void>("set_launch_at_login", { enabled }),
@@ -117,4 +140,8 @@ export const on = {
     listen<DownloadProgress>("download-progress", (e) => cb(e.payload)),
   history: (cb: () => void) => listen<null>("history", () => cb()),
   level: (cb: (level: number) => void) => listen<number>("level", (e) => cb(e.payload)),
+  micLevel: (cb: (level: number) => void) => listen<number>("mic-level", (e) => cb(e.payload)),
+  updateAvailable: (cb: (u: UpdateInfo) => void) => listen<UpdateInfo>("update-available", (e) => cb(e.payload)),
+  updateProgress: (cb: (downloaded: number, total: number) => void) =>
+    listen<[number, number]>("update-progress", (e) => cb(...e.payload)),
 };

@@ -25,6 +25,7 @@ use tauri::{
     tray::TrayIconBuilder,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_updater::UpdaterExt;
 
 use audio::Recorder;
 use output::Delivered;
@@ -46,6 +47,10 @@ struct AppState {
     models_dir: PathBuf,
     status: Mutex<Status>,
     recorder: Mutex<Option<Recorder>>,
+    /// Open while the Microphone page shows the test meter.
+    mic_test: Mutex<Option<Recorder>>,
+    /// Found by the check on launch.
+    update: Mutex<Option<UpdateInfo>>,
     engine: Mutex<Engine>,
     clipboard: Mutex<Option<arboard::Clipboard>>,
     downloading: Mutex<HashSet<String>>,
@@ -65,6 +70,12 @@ impl AppState {
         let id = self.settings.lock().unwrap().model.clone();
         self.model_path(&id).filter(|p| p.exists())
     }
+}
+
+#[derive(Clone, Serialize)]
+struct UpdateInfo {
+    version: String,
+    notes: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -127,7 +138,10 @@ fn start_recording(app: &AppHandle) {
         show_settings(app);
         return;
     }
-    match Recorder::start() {
+    // Dictation needs the microphone the test meter is holding.
+    state.mic_test.lock().unwrap().take();
+    let microphone = state.settings.lock().unwrap().microphone.clone();
+    match Recorder::start(&microphone) {
         Ok(rec) => {
             *state.recorder.lock().unwrap() = Some(rec);
             log::info!("recording started (microphone permission: {:?})", audio::mic_permission());
@@ -171,6 +185,9 @@ fn stop_recording(app: &AppHandle) {
             let message = match audio::mic_permission() {
                 audio::MicPermission::Granted => {
                     "Didn't hear anything. Check that the right microphone is selected and not muted."
+                }
+                _ if cfg!(target_os = "windows") => {
+                    "Dictate can't hear the microphone. Allow it in Settings → Privacy & security → Microphone."
                 }
                 _ => "Dictate can't hear the microphone. Allow it in System Settings → Privacy & Security → Microphone.",
             };
@@ -490,6 +507,8 @@ struct StateView {
     /// Providers that have an API key saved in the keychain.
     cloud_keys: Vec<&'static str>,
     launch_at_login: bool,
+    version: String,
+    update: Option<UpdateInfo>,
     /// Present only on Wayland: the typing helpers that are installed.
     wayland_tools: Option<Vec<&'static str>>,
     last_transcript: String,
@@ -526,6 +545,8 @@ fn get_state(app: AppHandle, state: tauri::State<AppState>) -> StateView {
         providers: cloud::PROVIDERS,
         cloud_keys: cloud::PROVIDERS.iter().map(|p| p.id).filter(|id| cloud::load_key(id).is_some()).collect(),
         launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
+        version: app.package_info().version.to_string(),
+        update: state.update.lock().unwrap().clone(),
         wayland_tools: output::wayland_status(),
         last_transcript: state.last_transcript.lock().unwrap().clone(),
     }
@@ -676,6 +697,110 @@ fn open_mic_settings(app: AppHandle) {
 }
 
 #[tauri::command]
+fn request_mic_permission() {
+    audio::request_mic_permission();
+}
+
+/// The system's sound settings, where the input volume is set.
+#[tauri::command]
+fn open_sound_settings(app: AppHandle) -> Result<(), String> {
+    let url = match std::env::consts::OS {
+        "macos" => "x-apple.systempreferences:com.apple.preference.sound?input",
+        "windows" => "ms-settings:sound",
+        _ => {
+            // Linux has no common settings URL, so try each desktop's sound panel.
+            let panels: [&[&str]; 3] =
+                [&["gnome-control-center", "sound"], &["systemsettings", "kcm_pulseaudio"], &["pavucontrol"]];
+            for panel in panels {
+                if std::process::Command::new(panel[0]).args(&panel[1..]).spawn().is_ok() {
+                    return Ok(());
+                }
+            }
+            return Err("Couldn't find your desktop's sound settings.".into());
+        }
+    };
+    tauri_plugin_opener::OpenerExt::opener(&app).open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_microphones() -> Vec<audio::InputDevice> {
+    audio::input_devices()
+}
+
+/// Opens the chosen microphone and streams its level to the settings window,
+/// so the user can see it hears them without dictating.
+#[tauri::command]
+fn start_mic_test(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if *state.status.lock().unwrap() != Status::Idle {
+        return Err("Finish dictating first.".into());
+    }
+    if audio::mic_permission() == audio::MicPermission::Undetermined {
+        audio::request_mic_permission();
+        return Err("Allow microphone access in the macOS prompt, then try again.".into());
+    }
+    let microphone = state.settings.lock().unwrap().microphone.clone();
+    // Replacing a running test (e.g. after switching microphones) drops the old one.
+    let rec = Recorder::start(&microphone).map_err(|e| format!("Could not start the microphone: {e:#}"))?;
+    let restart = state.mic_test.lock().unwrap().replace(rec).is_some();
+    if !restart {
+        let app = app.clone();
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_millis(50));
+                let state = app.state::<AppState>();
+                let level = match state.mic_test.lock().unwrap().as_ref() {
+                    Some(rec) => {
+                        rec.clear();
+                        rec.level()
+                    }
+                    None => break,
+                };
+                let _ = app.emit_to("main", "mic-level", level);
+            }
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_mic_test(state: tauri::State<AppState>) {
+    state.mic_test.lock().unwrap().take();
+}
+
+async fn find_update(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    let info = update.map(|u| UpdateInfo { version: u.version, notes: u.body });
+    *app.state::<AppState>().update.lock().unwrap() = info.clone();
+    Ok(info)
+}
+
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
+    find_update(&app).await.map_err(|e| format!("Could not check for updates: {e}"))
+}
+
+/// Downloads and installs the new version, then restarts into it.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let fail = |e: tauri_plugin_updater::Error| format!("Update failed: {e}");
+    let update = app.updater().map_err(fail)?.check().await.map_err(fail)?.ok_or("Dictate is up to date.")?;
+    let mut downloaded = 0u64;
+    let progress_app = app.clone();
+    update
+        .download_and_install(
+            |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = progress_app.emit("update-progress", (downloaded, total.unwrap_or(0)));
+            },
+            || {},
+        )
+        .await
+        .map_err(fail)?;
+    app.restart();
+}
+
+#[tauri::command]
 fn request_keyboard_permission(app: AppHandle) -> bool {
     let granted = modkeys::has_listen_permission(true);
     if !granted {
@@ -782,6 +907,7 @@ pub fn run() {
             autostart.build()
         })
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -796,6 +922,7 @@ pub fn run() {
                 s
             });
             let hotkey = settings.hotkey.clone();
+            let check_updates = settings.check_updates;
             let mut history = history::History::load(data_dir.join("history.json"));
             if history.prune(settings.history_days) {
                 let _ = history.save();
@@ -807,6 +934,8 @@ pub fn run() {
                 models_dir: data_dir.join("models"),
                 status: Mutex::new(Status::Idle),
                 recorder: Mutex::new(None),
+                mic_test: Mutex::new(None),
+                update: Mutex::new(None),
                 engine: Mutex::new(Engine::default()),
                 clipboard: Mutex::new(arboard::Clipboard::new().ok()),
                 downloading: Mutex::new(HashSet::new()),
@@ -826,6 +955,19 @@ pub fn run() {
                 emit_error(handle, format!("Could not register shortcut \"{hotkey}\": {e}"));
             }
             preload_model(handle);
+            if check_updates {
+                let app = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    match find_update(&app).await {
+                        Ok(Some(update)) => {
+                            log::info!("update available: {}", update.version);
+                            let _ = app.emit("update-available", update);
+                        }
+                        Ok(None) => {}
+                        Err(e) => log::warn!("update check failed: {e}"),
+                    }
+                });
+            }
             // Ask up front, so the first dictation isn't silently empty.
             if audio::mic_permission() == audio::MicPermission::Undetermined {
                 audio::request_mic_permission();
@@ -861,6 +1003,13 @@ pub fn run() {
             set_launch_at_login,
             request_keyboard_permission,
             open_mic_settings,
+            request_mic_permission,
+            open_sound_settings,
+            list_microphones,
+            start_mic_test,
+            stop_mic_test,
+            check_update,
+            install_update,
             pause_hotkey,
             resume_hotkey,
         ])

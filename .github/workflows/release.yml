@@ -1,5 +1,6 @@
-# Adds the Windows and Linux installers to a release published by scripts/release.sh
-# (the macOS app is built and signed locally). Run it manually to get them as workflow artifacts.
+# Adds the Windows and Linux installers, update files and latest.json entries to a release published by
+# scripts/release.sh (the macOS app is built and signed locally). Run it manually to get them as workflow
+# artifacts. Needs the TAURI_SIGNING_PRIVATE_KEY secret (contents of ~/.tauri/dictate.key).
 name: Release
 
 on:
@@ -14,6 +15,8 @@ jobs:
   build:
     strategy:
       fail-fast: false
+      # One at a time: each job merges its platforms into the release's latest.json.
+      max-parallel: 1
       matrix:
         include:
           - platform: windows-latest
@@ -45,6 +48,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           releaseId: ${{ github.event.release.id || '' }}
+          uploadUpdaterJson: true
           uploadWorkflowArtifacts: true

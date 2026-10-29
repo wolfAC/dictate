@@ -714,6 +714,35 @@ input::placeholder {
   transition: transform 200ms linear;
 }
 
+/* ---------- Microphone ---------- */
+
+.mic-test {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.meter {
+  width: 120px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.meter div {
+  height: 100%;
+  background: var(--success);
+  transform-origin: left;
+  transition: transform 80ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meter div {
+    transition: none;
+  }
+}
+
 /* ---------- Online ---------- */
 
 .cloud {

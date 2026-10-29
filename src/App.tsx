@@ -6,6 +6,7 @@ import { Icon, type IconName } from "./icons";
 import { Select } from "./Select";
 import { DictionaryPage } from "./DictionaryPage";
 import { HistoryPage } from "./HistoryPage";
+import { MicrophonePage } from "./MicrophonePage";
 import { Callout, Group, kbd, Row, Segmented, SwitchRow } from "./ui";
 import "./App.css";
 
@@ -32,16 +33,17 @@ const LANGUAGES: [string, string][] = [
 
 const STATUS_TITLE = { idle: "Ready to dictate", recording: "Listening…", transcribing: "Transcribing…" };
 
-type Page = "home" | "history" | "dictionary" | "shortcut" | "speech" | "output" | "general";
+type Page = "home" | "history" | "dictionary" | "shortcut" | "microphone" | "speech" | "output" | "general";
 
 const PAGES: { id: Page; title: string; icon: IconName; description: string }[] = [
   { id: "home", title: "Home", icon: "mic", description: "Start dictating and check that everything is set up." },
   { id: "history", title: "History", icon: "history", description: "Everything you've dictated, searchable." },
   { id: "dictionary", title: "Dictionary", icon: "book", description: "Words to spell your way, and phrases that type something else." },
   { id: "shortcut", title: "Shortcut", icon: "keyboard", description: "The keys that start and stop dictation." },
+  { id: "microphone", title: "Microphone", icon: "audio", description: "Which microphone Dictate listens to, and whether it hears you." },
   { id: "speech", title: "Speech", icon: "cpu", description: "Where your speech is turned into text, and in which language." },
   { id: "output", title: "Output", icon: "type", description: "How text reaches the app you're typing in." },
-  { id: "general", title: "General", icon: "sliders", description: "Startup and app behaviour." },
+  { id: "general", title: "General", icon: "sliders", description: "Startup, updates and app behaviour." },
 ];
 
 function savedPage(): Page {
@@ -88,6 +90,7 @@ export default function App() {
       on.status((status) => setState((s) => (s ? { ...s, status } : s))),
       on.error((msg) => setError(msg)),
       on.progress((p) => setProgress((all) => ({ ...all, [p.id]: p }))),
+      on.updateAvailable((update) => setState((s) => (s ? { ...s, update } : s))),
       on.transcript((t) => {
         setState((s) => (s ? { ...s, lastTranscript: t.text } : s));
         setNotice(t.delivered === "copied" ? "Copied to clipboard — paste it with Ctrl+V." : null);
@@ -182,9 +185,14 @@ export default function App() {
         )}
 
         {state.micPermission === "denied" && (
-          <Callout tone="warn" action={<button onClick={() => api.openMicSettings()}>Open Settings</button>}>
-            <strong>Microphone access is off</strong>, so Dictate only hears silence. Turn it on in System Settings
-            → Privacy & Security → Microphone.
+          <Callout tone="warn" action={<button onClick={() => goTo("microphone")}>Fix</button>}>
+            <strong>Microphone access is off</strong>, so Dictate only hears silence.
+          </Callout>
+        )}
+
+        {state.update && (
+          <Callout icon="download" action={<button onClick={() => goTo("general")}>Update</button>}>
+            <strong>Dictate {state.update.version} is available.</strong> You have {state.version}.
           </Callout>
         )}
 
@@ -217,6 +225,7 @@ export default function App() {
     ),
     history: <HistoryPage settings={settings} update={update} onError={setError} />,
     dictionary: <DictionaryPage settings={settings} update={update} />,
+    microphone: <MicrophonePage state={state} update={update} refresh={refresh} onError={setError} />,
     shortcut: (
       <Group title="Keys">
         <Row label="Shortcut" help="Click, then press new keys. Modifier pairs like Ctrl+Shift work too.">
@@ -331,18 +340,23 @@ export default function App() {
       </>
     ),
     general: (
-      <Group title="Startup">
-        <SwitchRow
-          label="Open at login"
-          help="Starts quietly in the menu bar."
-          checked={state.launchAtLogin}
-          onChange={async (enabled) => {
-            setState((s) => s && { ...s, launchAtLogin: enabled });
-            await api.setLaunchAtLogin(enabled).catch((err) => setError(String(err)));
-            refresh();
-          }}
-        />
-      </Group>
+      <>
+        <Group title="Startup">
+          <SwitchRow
+            label="Open at login"
+            help="Starts quietly in the menu bar."
+            checked={state.launchAtLogin}
+            onChange={async (enabled) => {
+              setState((s) => s && { ...s, launchAtLogin: enabled });
+              await api.setLaunchAtLogin(enabled).catch((err) => setError(String(err)));
+              refresh();
+            }}
+          />
+        </Group>
+        <Group title="Updates">
+          <Updates state={state} update={update} refresh={refresh} onError={setError} />
+        </Group>
+      </>
     ),
   };
 
@@ -833,5 +847,95 @@ function WaylandHelp({ tools }: { tools: string[] }) {
         <> Typing with {tools.join(" / ")}.</>
       )}
     </Callout>
+  );
+}
+
+/** Current version, a manual check, and installing a found update. */
+function Updates(props: {
+  state: AppState;
+  update: (patch: Partial<Settings>) => Promise<void>;
+  refresh: () => Promise<void>;
+  onError: (msg: string) => void;
+}) {
+  const { state, update, refresh, onError } = props;
+  const [checking, setChecking] = useState(false);
+  const [upToDate, setUpToDate] = useState(false);
+  const [installing, setInstalling] = useState<number | null>(null);
+
+  useEffect(() => {
+    const sub = on.updateProgress((downloaded, total) =>
+      setInstalling(total ? Math.round((downloaded / total) * 100) : 0),
+    );
+    return () => void sub.then((unlisten) => unlisten());
+  }, []);
+
+  async function check() {
+    setChecking(true);
+    setUpToDate(false);
+    try {
+      setUpToDate(!(await api.checkUpdate()));
+      await refresh();
+    } catch (e) {
+      onError(String(e));
+    }
+    setChecking(false);
+  }
+
+  async function install() {
+    setInstalling(0);
+    try {
+      await api.installUpdate(); // restarts the app when it succeeds
+    } catch (e) {
+      onError(String(e));
+      setInstalling(null);
+    }
+  }
+
+  return (
+    <>
+      <Row
+        label={state.update ? `Version ${state.update.version} is available` : `Version ${state.version}`}
+        help={
+          state.update
+            ? `You have ${state.version}. Dictate restarts to finish installing.`
+            : upToDate
+              ? "You have the latest version."
+              : undefined
+        }
+      >
+        {installing !== null ? (
+          <div className="progress-wrap">
+            <div
+              className="progress"
+              role="progressbar"
+              aria-label="Downloading update"
+              aria-valuenow={installing}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div style={{ transform: `scaleX(${installing / 100})` }} />
+            </div>
+            <span className="small muted tabular">{installing}%</span>
+          </div>
+        ) : state.update ? (
+          <button className="primary" onClick={install}>
+            Install and restart
+          </button>
+        ) : (
+          <button onClick={check} disabled={checking}>
+            <span className={checking ? "spin" : undefined}>
+              <Icon name={checking ? "loader" : "refresh"} size={14} />
+            </span>
+            {checking ? "Checking…" : "Check for updates"}
+          </button>
+        )}
+      </Row>
+      <SwitchRow
+        label="Check automatically"
+        help="Look for a new version each time Dictate starts."
+        checked={state.settings.checkUpdates}
+        onChange={(checkUpdates) => update({ checkUpdates })}
+      />
+    </>
   );
 }

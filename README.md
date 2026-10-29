@@ -25,8 +25,13 @@ Built with Tauri 2 (Rust) and React.
 
    Open and quit commands only count as short phrases (six words or fewer), and if nothing matches
    the words are typed as usual. Uninstallers and setup tools are never launched by voice.
-4. Tick **General → Open Dictate at login** to start it quietly in the menu bar when you log in.
-5. Closing the window keeps Dictate running in the tray / menu bar. Use **Quit** from there to exit.
+4. Under **Microphone**, allow access, pick which microphone to use (or keep the system default),
+   and use **Test microphone** to check it hears you.
+5. Tick **General → Open Dictate at login** to start it quietly in the menu bar when you log in.
+6. Dictate checks for a new version when it starts and offers to install it (**General → Updates**).
+   Updates install automatically on macOS, Windows and the Linux AppImage; for the `.deb` and `.rpm`,
+   download the new package from Releases.
+7. Closing the window keeps Dictate running in the tray / menu bar. Use **Quit** from there to exit.
 
 ### macOS
 
@@ -83,14 +88,18 @@ On Linux also install the [Tauri prerequisites](https://tauri.app/start/prerequi
 ```sh
 pnpm install
 pnpm tauri dev                # run the app
-pnpm tauri build              # build installers for this OS
+pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'   # build installers for this OS
 ```
+
+Release builds also make signed update files, which needs the updater key (`TAURI_SIGNING_PRIVATE_KEY`);
+the `--config` override skips them for local builds.
 
 On macOS, sign local builds with a stable identity, or macOS forgets the Accessibility and Microphone
 permissions after every rebuild. A self-signed "Dictate Local Signing" certificate in the login keychain works:
 
 ```sh
-APPLE_SIGNING_IDENTITY="Dictate Local Signing" pnpm tauri build --bundles app
+APPLE_SIGNING_IDENTITY="Dictate Local Signing" pnpm tauri build --bundles app \
+  --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
 Icons are generated from `app-icon.svg` with `pnpm tauri icon app-icon.svg` (then delete the
@@ -117,13 +126,17 @@ scripts/release.sh 0.2.0
 ```
 
 It runs the tests, sets the version in `package.json`, `tauri.conf.json` and `Cargo.toml`, commits and tags `v0.2.0`,
-builds the universal (Apple Silicon + Intel) app, makes `Dictate.dmg` and `Dictate.zip`, pushes, and uploads them with
-`gh release create`. It refuses to run without the `Dictate Local Signing` certificate (or `APPLE_SIGNING_IDENTITY`),
+builds the universal (Apple Silicon + Intel) app, makes `Dictate.dmg`, `Dictate.zip`, the update archive
+`Dictate.app.tar.gz` and `latest.json`, pushes, and uploads them with `gh release create`. It refuses to run without the `Dictate Local Signing` certificate (or `APPLE_SIGNING_IDENTITY`),
 because every release must be signed with the same one or users lose their Accessibility and Microphone permissions.
 Back the certificate up (Keychain Access → export as `.p12`) and keep it safe.
 
+Updates are signed with the updater key in `~/.tauri/dictate.key` (public half in `tauri.conf.json`). Installed copies
+only accept updates signed with it, so back it up too: if it's lost, users have to reinstall by hand to get a new key.
+The release workflow reads the same key from the `TAURI_SIGNING_PRIVATE_KEY` repository secret.
+
 Publishing the release starts `.github/workflows/release.yml`, which builds the Windows (`.msi`, `.exe`) and Linux
-(`.deb`, `.rpm`, `.AppImage`) installers and adds them to the same release. Run that workflow manually to get them as
+(`.deb`, `.rpm`, `.AppImage`) installers and adds them, with their entries in `latest.json`, to the same release. Run that workflow manually to get them as
 artifacts without releasing. `.github/workflows/ci.yml` type-checks the UI and runs the tests on macOS, Windows and Linux on every push, and builds
 the Windows (`.msi`, `.exe`) and Linux (`.deb`, `.rpm`) installers as workflow artifacts.
 

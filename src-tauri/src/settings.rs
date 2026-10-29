@@ -38,6 +38,8 @@ pub enum EngineKind {
 pub struct Settings {
     pub hotkey: String,
     pub mode: Mode,
+    /// `audio::InputDevice` id; empty uses the system default microphone.
+    pub microphone: String,
     pub model: String,
     /// Whisper language code, or "auto" to detect.
     pub language: String,
@@ -60,6 +62,8 @@ pub struct Settings {
     pub history_enabled: bool,
     /// Delete history older than this many days; 0 keeps it forever.
     pub history_days: u32,
+    /// Look for a new version on launch.
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -67,6 +71,7 @@ impl Default for Settings {
         Self {
             hotkey: "Ctrl+Shift".into(),
             mode: Mode::Hold,
+            microphone: String::new(),
             model: "base.en".into(),
             language: "en".into(),
             output: Output::Paste,
@@ -81,6 +86,7 @@ impl Default for Settings {
             replacements: Vec::new(),
             history_enabled: true,
             history_days: 30,
+            check_updates: true,
         }
     }
 }
