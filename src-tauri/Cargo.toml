@@ -1,0 +1,60 @@
+[package]
+name = "dictate"
+version = "0.1.0"
+description = "Offline push-to-talk dictation"
+authors = ["you"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "dictate_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-global-shortcut = "2.4"
+tauri-plugin-single-instance = "2.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+whisper-rs = { version = "0.16", features = ["log_backend"] }
+cpal = "0.18"
+enigo = "0.6"
+arboard = "3.6"
+futures-util = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["stream", "native-tls", "multipart"] }
+tokio = { version = "1", features = ["fs", "io-util", "rt"] }
+tauri-plugin-log = "2"
+tauri-plugin-autostart = "2.7"
+sysinfo = "0.39.6"
+keyring = "4.2.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = { version = "3.6", features = ["wayland-data-control"] }
+x11rb = "0.13"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSRunningApplication", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", features = ["NSURL", "NSString", "NSArray"] }
+
+[dev-dependencies]
+hound = "3.5"
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

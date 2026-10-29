@@ -1,0 +1,72 @@
+/* The overlay window is transparent; only the pill is drawn. */
+html.overlay,
+html.overlay body,
+html.overlay #root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html.overlay #root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+html.overlay .pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 18px 0 16px;
+  border-radius: 999px;
+  background: rgb(22 22 27 / 0.92);
+  border: 1px solid rgb(255 255 255 / 0.08);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.35);
+  color: #f2f2f5;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Cantarell", sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+html.overlay .mic {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  will-change: transform, box-shadow;
+}
+
+html.overlay .bars {
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+}
+
+html.overlay .bars span {
+  width: 3px;
+  height: 30px; /* MAX_HEIGHT in Overlay.tsx; scaled down with transform */
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fca5a5, #ef4444 50%, #fca5a5);
+  transform: scaleY(0.12);
+  will-change: transform;
+}
+
+html.overlay .label {
+  min-width: 84px;
+  opacity: 0.85;
+}
+
+html.overlay .pill.busy .mic {
+  background: #818cf8;
+}
+
+html.overlay .pill.busy .bars span {
+  background: linear-gradient(180deg, #c7d2fe, #818cf8 50%, #c7d2fe);
+}
