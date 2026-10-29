@@ -774,12 +774,13 @@ pub fn run() {
         )
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // Login launches start hidden in the tray/menu bar.
-        .plugin(
-            tauri_plugin_autostart::Builder::new()
-                .args(["--hidden"])
-                .macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent)
-                .build(),
-        )
+        .plugin({
+            let autostart = tauri_plugin_autostart::Builder::new().args(["--hidden"]);
+            // macos_launcher only exists in macOS builds of the plugin.
+            #[cfg(target_os = "macos")]
+            let autostart = autostart.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
+            autostart.build()
+        })
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             #[cfg(target_os = "macos")]
