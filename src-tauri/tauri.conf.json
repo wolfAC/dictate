@@ -55,7 +55,14 @@
       "minimumSystemVersion": "10.15",
       "entitlements": "Entitlements.plist"
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp"
+      }
+    }
   },
   "plugins": {
     "updater": {
