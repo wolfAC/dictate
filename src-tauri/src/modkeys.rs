@@ -213,7 +213,10 @@ mod platform {
 #[cfg(target_os = "macos")]
 pub use platform::has_listen_permission;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub use platform::has_listen_permission;
+
+#[cfg(target_os = "windows")]
 pub fn has_listen_permission(_prompt: bool) -> bool {
     true
 }
@@ -260,21 +263,63 @@ mod platform {
 
 #[cfg(target_os = "linux")]
 mod platform {
+    use std::{
+        fs::File,
+        os::fd::AsRawFd,
+        time::{Duration, Instant},
+    };
+
     use super::{Keys, Mods};
     use x11rb::{protocol::xproto::ConnectionExt, rust_connection::RustConnection};
 
-    /// X11 only. On Wayland apps can't read global key state; use `dictate --toggle` there.
-    pub struct Keyboard {
+    fn is_wayland() -> bool {
+        std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|s| s == "wayland")
+    }
+
+    /// Whether Dictate can see modifier keys. On Wayland that means reading `/dev/input`,
+    /// which needs the user to be in the `input` group.
+    pub fn has_listen_permission(_prompt: bool) -> bool {
+        !is_wayland() || !evdev::keyboards().is_empty()
+    }
+
+    /// X11 reads the key map from the X server. Wayland doesn't let apps see global key
+    /// state, so there the kernel's input devices are read directly.
+    pub enum Keyboard {
+        X11(X11),
+        Evdev(evdev::Devices),
+    }
+
+    impl Keyboard {
+        pub fn new() -> Option<Self> {
+            if !is_wayland() && let Some(x11) = X11::new() {
+                return Some(Keyboard::X11(x11));
+            }
+            let devices = evdev::Devices::new();
+            if devices.is_empty() {
+                log::warn!(
+                    "can't read /dev/input, so modifier-only shortcuts won't work until you join the input group"
+                );
+            }
+            Some(Keyboard::Evdev(devices))
+        }
+
+        pub fn state(&mut self) -> (Mods, Keys) {
+            match self {
+                Keyboard::X11(x11) => x11.state(),
+                Keyboard::Evdev(devices) => devices.state(),
+            }
+        }
+    }
+
+    pub struct X11 {
         conn: RustConnection,
         /// Keycodes for Shift, Lock, Control, Mod1 (Alt), Mod2, Mod3, Mod4 (Super), Mod5.
         modifier_keycodes: Vec<Vec<u8>>,
     }
 
-    impl Keyboard {
-        pub fn new() -> Option<Self> {
-            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                return None;
-            }
+    impl X11 {
+        fn new() -> Option<Self> {
             let (conn, _) = x11rb::connect(None).ok()?;
             let mapping = conn.get_modifier_mapping().ok()?.reply().ok()?;
             let per = mapping.keycodes_per_modifier() as usize;
@@ -286,7 +331,7 @@ mod platform {
             Some(Self { conn, modifier_keycodes })
         }
 
-        pub fn state(&mut self) -> (Mods, Keys) {
+        fn state(&mut self) -> (Mods, Keys) {
             let Ok(keys) = self.conn.query_keymap().map_err(|_| ()).and_then(|c| c.reply().map_err(|_| ())) else {
                 return (Mods::default(), Keys::default());
             };
@@ -299,6 +344,111 @@ mod platform {
                 .map(usize::from)
                 .collect();
             (mods, down)
+        }
+    }
+
+    /// Kernel input devices (`/dev/input/event*`), polled with the EVIOCGKEY ioctl.
+    pub mod evdev {
+        use super::*;
+
+        // Key codes from linux/input-event-codes.h.
+        const KEY_LEFTCTRL: usize = 29;
+        const KEY_LEFTSHIFT: usize = 42;
+        const KEY_RIGHTSHIFT: usize = 54;
+        const KEY_LEFTALT: usize = 56;
+        const KEY_CAPSLOCK: usize = 58;
+        const KEY_RIGHTCTRL: usize = 97;
+        const KEY_RIGHTALT: usize = 100;
+        const KEY_LEFTMETA: usize = 125;
+        const KEY_RIGHTMETA: usize = 126;
+        const KEY_A: usize = 30;
+        const MODIFIERS: [usize; 9] = [
+            KEY_LEFTCTRL,
+            KEY_RIGHTCTRL,
+            KEY_LEFTSHIFT,
+            KEY_RIGHTSHIFT,
+            KEY_LEFTALT,
+            KEY_RIGHTALT,
+            KEY_LEFTMETA,
+            KEY_RIGHTMETA,
+            KEY_CAPSLOCK,
+        ];
+        /// KEY_MAX is 0x2ff, so 768 bits.
+        const KEY_BYTES: usize = 96;
+        const EV_KEY: u64 = 1;
+        /// Picks up keyboards plugged in (or permissions granted) after launch.
+        const RESCAN: Duration = Duration::from_secs(5);
+
+        /// `_IOC(_IOC_READ, 'E', nr, len)`
+        const fn ioc_read(nr: u64, len: usize) -> u64 {
+            (2 << 30) | ((len as u64) << 16) | ((b'E' as u64) << 8) | nr
+        }
+        const EVIOCGKEY: u64 = ioc_read(0x18, KEY_BYTES);
+        const EVIOCGBIT_KEY: u64 = ioc_read(0x20 + EV_KEY, KEY_BYTES);
+
+        fn bit(bits: &[u8; KEY_BYTES], code: usize) -> bool {
+            bits[code / 8] & (1 << (code % 8)) != 0
+        }
+
+        fn read_bits(file: &File, request: u64) -> Option<[u8; KEY_BYTES]> {
+            let mut bits = [0u8; KEY_BYTES];
+            let result = unsafe { libc::ioctl(file.as_raw_fd(), request as _, bits.as_mut_ptr()) };
+            (result >= 0).then_some(bits)
+        }
+
+        /// Every readable device that has letter and modifier keys.
+        pub fn keyboards() -> Vec<File> {
+            let Ok(entries) = std::fs::read_dir("/dev/input") else { return Vec::new() };
+            entries
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("event"))
+                .filter_map(|e| File::open(e.path()).ok())
+                .filter(|f| {
+                    read_bits(f, EVIOCGBIT_KEY)
+                        .is_some_and(|caps| bit(&caps, KEY_A) && bit(&caps, KEY_LEFTSHIFT))
+                })
+                .collect()
+        }
+
+        pub struct Devices {
+            files: Vec<File>,
+            scanned: Instant,
+        }
+
+        impl Devices {
+            pub fn new() -> Self {
+                Self { files: keyboards(), scanned: Instant::now() }
+            }
+
+            pub fn is_empty(&self) -> bool {
+                self.files.is_empty()
+            }
+
+            pub fn state(&mut self) -> (Mods, Keys) {
+                if self.scanned.elapsed() >= RESCAN {
+                    self.files = keyboards();
+                    self.scanned = Instant::now();
+                }
+                // Combine all keyboards: a laptop's built-in one and an external one count as one.
+                let mut down = [0u8; KEY_BYTES];
+                self.files.retain(|f| match read_bits(f, EVIOCGKEY) {
+                    Some(bits) => {
+                        down.iter_mut().zip(bits).for_each(|(d, b)| *d |= b);
+                        true
+                    }
+                    None => false, // unplugged
+                });
+                let any = |codes: &[usize]| codes.iter().any(|&c| bit(&down, c));
+                let mods = Mods {
+                    ctrl: any(&[KEY_LEFTCTRL, KEY_RIGHTCTRL]),
+                    shift: any(&[KEY_LEFTSHIFT, KEY_RIGHTSHIFT]),
+                    alt: any(&[KEY_LEFTALT, KEY_RIGHTALT]),
+                    meta: any(&[KEY_LEFTMETA, KEY_RIGHTMETA]),
+                };
+                // Keys bitset holds 0–255; that covers every key on a normal keyboard.
+                let keys = (1..256).filter(|&c| !MODIFIERS.contains(&c) && bit(&down, c)).collect();
+                (mods, keys)
+            }
         }
     }
 }

@@ -146,13 +146,14 @@ export default function App() {
   }
 
   const provider = state.providers.find((p) => p.id === settings.cloudProvider);
+  const modifierOnly = !/\+(Key|Digit|F\d|Space)/.test(settings.hotkey);
   const missingKey = settings.engine === "cloud" && !state.cloudKeys.includes(settings.cloudProvider);
   const setupIssues = [
     settings.engine === "local" && !selected?.downloaded,
     missingKey,
     isMac && !state.inputPermission,
     state.micPermission === "denied",
-    isMac && !state.keyboardPermission && !/\+(Key|Digit|F\d|Space)/.test(settings.hotkey),
+    !state.keyboardPermission && modifierOnly,
   ].filter(Boolean).length;
 
   const pages: Record<Page, ReactNode> = {
@@ -196,7 +197,15 @@ export default function App() {
           </Callout>
         )}
 
-        {isMac && !state.keyboardPermission && !/\+(Key|Digit|F\d|Space)/.test(settings.hotkey) && (
+        {state.platform === "linux" && !state.keyboardPermission && modifierOnly && (
+          <Callout tone="warn" action={<button onClick={refresh}>Check again</button>}>
+            <strong>Let Dictate see the keyboard</strong> so it can tell when you hold {kbd(settings.hotkey)}. On
+            Wayland that needs the <code>input</code> group: run{" "}
+            <code>sudo usermod -aG input $USER</code>, then log out and back in.
+          </Callout>
+        )}
+
+        {isMac && !state.keyboardPermission && modifierOnly && (
           <Callout
             tone="warn"
             action={<button onClick={() => api.requestKeyboardPermission().then(refresh)}>Open Settings</button>}
@@ -834,8 +843,9 @@ function HotkeyInput(props: {
 function WaylandHelp({ tools }: { tools: string[] }) {
   return (
     <Callout>
-      <strong>You’re on Wayland.</strong> Global shortcuts set here may not work in every app. Instead, add a shortcut
-      in your desktop’s keyboard settings that runs <code>dictate --toggle</code>.
+      <strong>You’re on Wayland.</strong> Modifier-only shortcuts like Ctrl+Shift work everywhere. Other shortcuts
+      may not work in every app; for those, add a shortcut in your desktop’s keyboard settings that runs{" "}
+      <code>dictate --toggle</code>.
       {tools.length === 0 ? (
         <>
           {" "}

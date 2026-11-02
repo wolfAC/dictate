@@ -43,7 +43,9 @@ Built with Tauri 2 (Rust) and React.
 - **X11**: works out of the box.
 - **Wayland** (Fedora, Ubuntu 22.04+, and most current desktops): Wayland stops apps from grabbing global
   shortcuts or typing into other windows. To work around that:
-  - Bind a shortcut in your desktop's keyboard settings that runs `dictate --toggle`.
+  - Modifier-only shortcuts like Ctrl+Shift are read from the kernel (`/dev/input`), which needs the
+    `input` group: `sudo usermod -aG input $USER`, then log out and back in.
+  - For other shortcuts, bind one in your desktop's keyboard settings that runs `dictate --toggle`.
     It talks to the running app and starts or stops dictation.
   - Install a typing helper so text is inserted automatically:
     `wtype` on Sway, Hyprland or KDE, or `ydotool` on GNOME (`sudo dnf install ydotool`, then enable `ydotoold`).

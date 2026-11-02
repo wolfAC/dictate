@@ -499,7 +499,8 @@ struct StateView {
     status: Status,
     platform: &'static str,
     input_permission: bool,
-    /// macOS Input Monitoring, needed for modifier-only shortcuts like Ctrl+Shift.
+    /// Whether modifier-only shortcuts like Ctrl+Shift can be seen: macOS Input Monitoring,
+    /// or on Linux Wayland read access to /dev/input.
     keyboard_permission: bool,
     mic_permission: audio::MicPermission,
     recommendation: specs::Recommendation,
@@ -803,7 +804,7 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn request_keyboard_permission(app: AppHandle) -> bool {
     let granted = modkeys::has_listen_permission(true);
-    if !granted {
+    if !granted && cfg!(target_os = "macos") {
         // The prompt only appears once; after that, send the user to the settings page.
         let _ = tauri_plugin_opener::OpenerExt::opener(&app).open_url(
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",

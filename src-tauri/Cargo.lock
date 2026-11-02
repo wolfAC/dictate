@@ -1045,6 +1045,7 @@ dependencies = [
  "futures-util",
  "hound",
  "keyring",
+ "libc",
  "log",
  "objc2",
  "objc2-app-kit",
