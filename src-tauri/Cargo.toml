@@ -1,6 +1,6 @@
 [package]
 name = "dictate"
-version = "0.1.1"
+version = "0.1.2"
 description = "Offline push-to-talk dictation"
 authors = ["you"]
 edition = "2024"
