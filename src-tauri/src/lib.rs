@@ -819,10 +819,11 @@ fn request_keyboard_permission(app: AppHandle) -> bool {
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Start dictation", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "updates", "Check for Updates…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Dictate", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&toggle, &settings, &PredefinedMenuItem::separator(app)?, &quit],
+        &[&toggle, &settings, &updates, &PredefinedMenuItem::separator(app)?, &quit],
     )?;
     *app.state::<AppState>().tray_toggle.lock().unwrap() = Some(toggle);
 
@@ -841,6 +842,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "toggle" => toggle_recording(app),
             "settings" => show_settings(app),
+            "updates" => {
+                show_settings(app);
+                // The settings page opens General › Updates and runs the check there.
+                let _ = app.emit_to("main", "check-updates", ());
+            }
             "quit" => app.exit(0),
             _ => {}
         })

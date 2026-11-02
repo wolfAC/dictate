@@ -142,6 +142,7 @@ export const on = {
   level: (cb: (level: number) => void) => listen<number>("level", (e) => cb(e.payload)),
   micLevel: (cb: (level: number) => void) => listen<number>("mic-level", (e) => cb(e.payload)),
   updateAvailable: (cb: (u: UpdateInfo) => void) => listen<UpdateInfo>("update-available", (e) => cb(e.payload)),
+  checkUpdates: (cb: () => void) => listen<null>("check-updates", () => cb()),
   updateProgress: (cb: (downloaded: number, total: number) => void) =>
     listen<[number, number]>("update-progress", (e) => cb(...e.payload)),
 };

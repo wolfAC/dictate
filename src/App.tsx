@@ -71,6 +71,8 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [page, setPage] = useState<Page>(savedPage);
   const content = useRef<HTMLElement>(null);
+  // Bumped by the tray's "Check for Updates…" so the Updates section runs a check.
+  const [checkRequest, setCheckRequest] = useState(0);
 
   function goTo(next: Page) {
     setPage(next);
@@ -91,6 +93,10 @@ export default function App() {
       on.error((msg) => setError(msg)),
       on.progress((p) => setProgress((all) => ({ ...all, [p.id]: p }))),
       on.updateAvailable((update) => setState((s) => (s ? { ...s, update } : s))),
+      on.checkUpdates(() => {
+        goTo("general");
+        setCheckRequest((n) => n + 1);
+      }),
       on.transcript((t) => {
         setState((s) => (s ? { ...s, lastTranscript: t.text } : s));
         setNotice(t.delivered === "copied" ? "Copied to clipboard — paste it with Ctrl+V." : null);
@@ -363,7 +369,7 @@ export default function App() {
           />
         </Group>
         <Group title="Updates">
-          <Updates state={state} update={update} refresh={refresh} onError={setError} />
+          <Updates state={state} update={update} refresh={refresh} onError={setError} checkRequest={checkRequest} />
         </Group>
       </>
     ),
@@ -866,8 +872,10 @@ function Updates(props: {
   update: (patch: Partial<Settings>) => Promise<void>;
   refresh: () => Promise<void>;
   onError: (msg: string) => void;
+  /** Changes when a check was asked for from outside (the tray menu). */
+  checkRequest: number;
 }) {
-  const { state, update, refresh, onError } = props;
+  const { state, update, refresh, onError, checkRequest } = props;
   const [checking, setChecking] = useState(false);
   const [upToDate, setUpToDate] = useState(false);
   const [installing, setInstalling] = useState<number | null>(null);
@@ -890,6 +898,10 @@ function Updates(props: {
     }
     setChecking(false);
   }
+
+  useEffect(() => {
+    if (checkRequest > 0) check();
+  }, [checkRequest]);
 
   async function install() {
     setInstalling(0);
